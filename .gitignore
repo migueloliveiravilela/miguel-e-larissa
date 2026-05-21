@@ -1,0 +1,11 @@
+node_modules/
+
+# Fotos e vídeos ficam no volume persistente do Railway
+photos/
+audio/
+
+# Textos salvos também ficam no volume
+texts.json
+
+# macOS
+.DS_Store

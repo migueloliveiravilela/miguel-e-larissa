@@ -1,0 +1,12 @@
+{
+  "name": "miguel-e-larissa",
+  "version": "1.0.0",
+  "description": "Site romântico Miguel & Larissa",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
