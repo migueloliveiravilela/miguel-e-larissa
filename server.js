@@ -10,6 +10,10 @@ const PHOTOS     = process.env.PHOTOS_DIR  || path.join(ROOT, 'photos');
 const AUDIO      = process.env.AUDIO_DIR   || path.join(ROOT, 'audio');
 const TEXTS_PATH = process.env.TEXTS_PATH  || path.join(ROOT, 'texts.json');
 
+// Caminhos do git checkout — fallback quando o arquivo não está no volume
+const GIT_PHOTOS = path.join(ROOT, 'photos');
+const GIT_AUDIO  = path.join(ROOT, 'audio');
+
 // Garante que as pastas existem no startup (essencial no Railway com volume)
 fs.mkdirSync(PHOTOS, { recursive: true });
 fs.mkdirSync(AUDIO,  { recursive: true });
@@ -296,7 +300,7 @@ function handleUpload(req, res) {
   });
 }
 
-// ── /list — lista arquivos por prefixo ────────────────────────────────────────
+// ── /list — lista arquivos por prefixo (volume + git checkout) ───────────────
 function handleList(req, res) {
   const url    = new URL(req.url, 'http://localhost');
   const prefix = (url.searchParams.get('prefix') || '').replace(/[^a-z0-9\-_]/gi, '').slice(0, 80);
@@ -304,17 +308,27 @@ function handleList(req, res) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Missing prefix' })); return;
   }
-  fs.readdir(PHOTOS, (err, all) => {
-    const files = (err ? [] : all)
-      .filter(f => f.startsWith(prefix + '-'))
-      .sort((a, b) => {
-        const na = parseInt((a.match(/(\d+)(?:\.[^.]+)?$/) || [0, 0])[1]);
-        const nb = parseInt((b.match(/(\d+)(?:\.[^.]+)?$/) || [0, 0])[1]);
-        return na - nb;
-      });
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
-    res.end(JSON.stringify({ files }));
-  });
+
+  function readDir(dir) {
+    try { return fs.readdirSync(dir); } catch { return []; }
+  }
+
+  // Junta resultados dos dois diretórios sem duplicar
+  const seen   = new Set();
+  const merged = [...readDir(PHOTOS), ...readDir(GIT_PHOTOS)]
+    .filter(f => {
+      if (!f.startsWith(prefix + '-') || seen.has(f)) return false;
+      seen.add(f);
+      return true;
+    })
+    .sort((a, b) => {
+      const na = parseInt((a.match(/(\d+)(?:\.[^.]+)?$/) || [0, 0])[1]);
+      const nb = parseInt((b.match(/(\d+)(?:\.[^.]+)?$/) || [0, 0])[1]);
+      return na - nb;
+    });
+
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+  res.end(JSON.stringify({ files: merged }));
 }
 
 // ── /texts — lê textos customizados ──────────────────────────────────────────
@@ -386,13 +400,32 @@ const server = http.createServer((req, res) => {
     res.writeHead(405); res.end('Method not allowed'); return;
   }
 
+  // /photos/ — tenta PHOTOS_DIR (volume) primeiro; fallback para git checkout
+  if (pathname.startsWith('/photos/')) {
+    const filename = decodeURIComponent(pathname.slice('/photos/'.length));
+    if (filename.includes('..') || filename.includes('\0')) { res.writeHead(403); res.end('Forbidden'); return; }
+    const volumePath = path.join(PHOTOS, filename);
+    const gitPath    = path.join(GIT_PHOTOS, filename);
+    const chosen     = fs.existsSync(volumePath) ? volumePath : gitPath;
+    if (req.method === 'GET') console.log(`  → /photos/${filename} [${chosen === volumePath ? 'volume' : 'git'}]`);
+    serveStatic(res, chosen);
+    return;
+  }
+
+  // /audio/ — tenta AUDIO_DIR (volume) primeiro; fallback para git checkout
+  if (pathname.startsWith('/audio/')) {
+    const filename = decodeURIComponent(pathname.slice('/audio/'.length));
+    if (filename.includes('..') || filename.includes('\0')) { res.writeHead(403); res.end('Forbidden'); return; }
+    const volumePath = path.join(AUDIO, filename);
+    const gitPath    = path.join(GIT_AUDIO, filename);
+    const chosen     = fs.existsSync(volumePath) ? volumePath : gitPath;
+    serveStatic(res, chosen);
+    return;
+  }
+
   const filePath = pathname === '/'
     ? path.join(ROOT, 'index.html')
     : path.join(ROOT, pathname.replace(/^\//, ''));
-
-  if (req.method === 'GET' && (pathname.startsWith('/photos/') || pathname.startsWith('/audio/'))) {
-    console.log(`  → GET ${pathname}`);
-  }
 
   serveStatic(res, filePath);
 });
