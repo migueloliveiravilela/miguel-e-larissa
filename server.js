@@ -6,7 +6,14 @@ const { execFile } = require('child_process');
 
 const PORT      = process.env.PORT || 3000;
 const ROOT      = __dirname;
-const PHOTOS    = path.join(ROOT, 'photos');
+const PHOTOS    = process.env.PHOTOS_DIR || path.join(ROOT, 'photos');
+const AUDIO     = process.env.AUDIO_DIR  || path.join(ROOT, 'audio');
+
+// Garante que as pastas existem no startup (essencial no Railway com volume)
+fs.mkdirSync(PHOTOS, { recursive: true });
+fs.mkdirSync(AUDIO,  { recursive: true });
+console.log(`  📁 photos: ${PHOTOS}`);
+console.log(`  📁 audio:  ${AUDIO}`);
 
 // ── MIME by extension (fallback) ─────────────────────────────────────────────
 const EXT_MIME = {
@@ -177,7 +184,7 @@ function handleUpload(req, res) {
     let destDir, urlBase;
     if (isAudio) {
       if (!['.mp3','.m4a','.ogg'].includes(ext)) ext = '.mp3';
-      destDir = path.join(ROOT, 'audio');
+      destDir = AUDIO;
       urlBase = '/audio/';
     } else if (isVideo) {
       if (!['.mp4','.webm','.mov'].includes(ext)) ext = '.mp4';
