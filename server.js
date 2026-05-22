@@ -16,23 +16,29 @@ fs.mkdirSync(AUDIO,  { recursive: true });
 console.log(`  📁 photos: ${PHOTOS}`);
 console.log(`  📁 audio:  ${AUDIO}`);
 
-// ── Sincroniza arquivos do git para o volume no primeiro deploy ────────────
-// Se PHOTOS_DIR aponta para um volume diferente do checkout do git,
-// copia os arquivos que existem no repo mas ainda não estão no volume.
+// ── Sincroniza arquivos do git para o volume no startup ───────────────────
+// Copia arquivos do checkout git que ainda não existem no destino (volume).
+// Roda mesmo que os caminhos sejam iguais (no-op nesse caso).
 function syncGitToVolume(gitDir, volumeDir, label) {
-  if (gitDir === volumeDir) return;
+  if (gitDir === volumeDir) {
+    const count = (() => { try { return fs.readdirSync(volumeDir).length; } catch { return 0; } })();
+    console.log(`  📂 ${label}: ${count} arquivo(s) em ${volumeDir}`);
+    return;
+  }
   try {
-    const files = fs.readdirSync(gitDir);
-    let copied = 0;
-    for (const f of files) {
+    const srcFiles = fs.readdirSync(gitDir);
+    let copied = 0, skipped = 0;
+    for (const f of srcFiles) {
       const dst = path.join(volumeDir, f);
       if (!fs.existsSync(dst)) {
         fs.copyFileSync(path.join(gitDir, f), dst);
         copied++;
+      } else {
+        skipped++;
       }
     }
-    if (copied > 0) console.log(`  ✓ sync ${label}: ${copied} arquivo(s) git → volume`);
-    else console.log(`  ✓ sync ${label}: volume já atualizado`);
+    const total = fs.readdirSync(volumeDir).length;
+    console.log(`  ✓ sync ${label}: ${copied} copiado(s), ${skipped} já existiam → ${total} total em ${volumeDir}`);
   } catch (e) {
     console.warn(`  ⚠ sync ${label} falhou: ${e.message}`);
   }
@@ -41,12 +47,18 @@ function syncGitToVolume(gitDir, volumeDir, label) {
 syncGitToVolume(path.join(ROOT, 'photos'), PHOTOS, 'photos');
 syncGitToVolume(path.join(ROOT, 'audio'),  AUDIO,  'audio');
 
-// Sincroniza texts.json do git para o volume (se ainda não existe no volume)
+// Sincroniza texts.json do git para o volume
 const TEXTS_GIT = path.join(ROOT, 'texts.json');
-if (!fs.existsSync(TEXTS_PATH) && fs.existsSync(TEXTS_GIT)) {
-  try { fs.copyFileSync(TEXTS_GIT, TEXTS_PATH); console.log('  ✓ sync texts.json git → volume'); }
+if (TEXTS_PATH !== TEXTS_GIT && !fs.existsSync(TEXTS_PATH) && fs.existsSync(TEXTS_GIT)) {
+  try { fs.copyFileSync(TEXTS_GIT, TEXTS_PATH); console.log('  ✓ sync texts.json → volume'); }
   catch (e) { console.warn('  ⚠ sync texts.json falhou:', e.message); }
 }
+
+// Log de diagnóstico: lista os primeiros 10 arquivos em PHOTOS
+console.log('  🔍 Primeiros arquivos em PHOTOS_DIR:');
+try {
+  fs.readdirSync(PHOTOS).slice(0, 10).forEach(f => console.log(`     ${f}`));
+} catch (e) { console.warn('  ⚠ não foi possível listar PHOTOS:', e.message); }
 
 // ── MIME by extension (fallback) ─────────────────────────────────────────────
 const EXT_MIME = {
