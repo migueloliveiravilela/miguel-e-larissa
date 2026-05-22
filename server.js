@@ -6,14 +6,47 @@ const { execFile } = require('child_process');
 
 const PORT      = process.env.PORT || 3000;
 const ROOT      = __dirname;
-const PHOTOS    = process.env.PHOTOS_DIR || path.join(ROOT, 'photos');
-const AUDIO     = process.env.AUDIO_DIR  || path.join(ROOT, 'audio');
+const PHOTOS     = process.env.PHOTOS_DIR  || path.join(ROOT, 'photos');
+const AUDIO      = process.env.AUDIO_DIR   || path.join(ROOT, 'audio');
+const TEXTS_PATH = process.env.TEXTS_PATH  || path.join(ROOT, 'texts.json');
 
 // Garante que as pastas existem no startup (essencial no Railway com volume)
 fs.mkdirSync(PHOTOS, { recursive: true });
 fs.mkdirSync(AUDIO,  { recursive: true });
 console.log(`  📁 photos: ${PHOTOS}`);
 console.log(`  📁 audio:  ${AUDIO}`);
+
+// ── Sincroniza arquivos do git para o volume no primeiro deploy ────────────
+// Se PHOTOS_DIR aponta para um volume diferente do checkout do git,
+// copia os arquivos que existem no repo mas ainda não estão no volume.
+function syncGitToVolume(gitDir, volumeDir, label) {
+  if (gitDir === volumeDir) return;
+  try {
+    const files = fs.readdirSync(gitDir);
+    let copied = 0;
+    for (const f of files) {
+      const dst = path.join(volumeDir, f);
+      if (!fs.existsSync(dst)) {
+        fs.copyFileSync(path.join(gitDir, f), dst);
+        copied++;
+      }
+    }
+    if (copied > 0) console.log(`  ✓ sync ${label}: ${copied} arquivo(s) git → volume`);
+    else console.log(`  ✓ sync ${label}: volume já atualizado`);
+  } catch (e) {
+    console.warn(`  ⚠ sync ${label} falhou: ${e.message}`);
+  }
+}
+
+syncGitToVolume(path.join(ROOT, 'photos'), PHOTOS, 'photos');
+syncGitToVolume(path.join(ROOT, 'audio'),  AUDIO,  'audio');
+
+// Sincroniza texts.json do git para o volume (se ainda não existe no volume)
+const TEXTS_GIT = path.join(ROOT, 'texts.json');
+if (!fs.existsSync(TEXTS_PATH) && fs.existsSync(TEXTS_GIT)) {
+  try { fs.copyFileSync(TEXTS_GIT, TEXTS_PATH); console.log('  ✓ sync texts.json git → volume'); }
+  catch (e) { console.warn('  ⚠ sync texts.json falhou:', e.message); }
+}
 
 // ── MIME by extension (fallback) ─────────────────────────────────────────────
 const EXT_MIME = {
@@ -271,8 +304,6 @@ function handleList(req, res) {
     res.end(JSON.stringify({ files }));
   });
 }
-
-const TEXTS_PATH = path.join(ROOT, 'texts.json');
 
 // ── /texts — lê textos customizados ──────────────────────────────────────────
 function handleGetTexts(req, res) {

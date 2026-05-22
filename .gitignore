@@ -1,11 +1,15 @@
 node_modules/
-
-# Fotos e vídeos ficam no volume persistente do Railway
-photos/
-audio/
-
-# Textos salvos também ficam no volume
-texts.json
-
-# macOS
 .DS_Store
+
+# Bootstrap temporário — será restaurado após o push
+!photos/
+!photos/**
+!audio/
+!audio/**
+!texts.json
+
+# Exclui os 4 vídeos que excedem 100 MB (limite do GitHub)
+photos/gallery-47.mov
+photos/gallery-50.mov
+photos/gallery-51.mov
+photos/gallery-53.mov
