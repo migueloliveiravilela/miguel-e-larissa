@@ -1,50 +1,51 @@
 'use strict';
 /* =====================================================
-   API — adaptador Supabase
-   Substitui o servidor Node (upload/list/texts/delete)
-   por Storage + tabela `texts` do Supabase.
-
-   Edição restrita: apenas os e-mails autorizados (também
-   travado por RLS no banco) entram via código por e-mail
-   ou, se habilitado, botão "Entrar com Google".
+   API — adaptador Supabase (site PRIVADO)
+   Só os e-mails autorizados veem o conteúdo: a página
+   abre num portão de login e toda mídia é servida por
+   URL assinada (buckets privados). RLS reforça tudo
+   no banco — o frontend é só a primeira porta.
    ===================================================== */
 window.API = (function () {
   const { SUPABASE_URL, SUPABASE_ANON_KEY, GOOGLE_LOGIN } = window.SITE_CONFIG;
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  const PUB = `${SUPABASE_URL}/storage/v1/object/public`;
-  const photoUrl = (file) => `${PUB}/photos/${encodeURIComponent(file)}`;
-  const audioUrl = (file) => `${PUB}/audio/${encodeURIComponent(file)}`;
+  const SIGN_TTL = 60 * 60 * 24 * 7; // 7 dias
+  // name → signedUrl, por bucket. Preenchido no init() e mantido nos uploads.
+  const urls = { photos: new Map(), audio: new Map() };
 
-  // ── Login (modal: e-mail → código de 6 dígitos) ───────────────────────────
-  function loginModal() {
+  const photoUrl = (file) => urls.photos.get(file) || '';
+  const audioUrl = (file) => urls.audio.get(file) || '';
+
+  // ── Portão de login (tela cheia, sem cancelar) ────────────────────────────
+  function loginScreen() {
     return new Promise((resolve) => {
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:1rem;';
+      wrap.id = 'login-gate';
+      wrap.style.cssText = 'position:fixed;inset:0;z-index:99999;background:linear-gradient(160deg,#FCE4EC,#F8BBD0 60%,#F48FB1);display:flex;align-items:center;justify-content:center;padding:1rem;';
       wrap.innerHTML = `
-        <div style="background:#fff;border-radius:16px;max-width:340px;width:100%;padding:1.6rem;font-family:Nunito,sans-serif;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3);">
-          <div style="font-size:2rem;">🔐</div>
-          <h3 style="margin:.4rem 0 .2rem;color:#C2185B;font-size:1.05rem;">Área do casal</h3>
-          <p data-step-hint style="color:#666;font-size:.82rem;margin:0 0 1rem;">Para editar, confirme que é você.</p>
+        <div style="background:#fff;border-radius:18px;max-width:350px;width:100%;padding:2rem 1.6rem;font-family:Nunito,sans-serif;text-align:center;box-shadow:0 24px 70px rgba(194,24,91,.25);">
+          <div style="font-size:2.4rem;">♡</div>
+          <h3 style="margin:.4rem 0 .2rem;color:#C2185B;font-size:1.1rem;">Nosso cantinho</h3>
+          <p data-step-hint style="color:#666;font-size:.82rem;margin:0 0 1.2rem;">Esse site é só nosso. Confirme que é você.</p>
           <div data-step="email">
             <input data-email type="email" placeholder="seu e-mail" autocomplete="email"
-              style="width:100%;padding:.6rem .8rem;border:1px solid #e5b8c8;border-radius:10px;font-size:.9rem;box-sizing:border-box;" />
-            <button data-send type="button" style="width:100%;margin-top:.6rem;padding:.6rem;border:0;border-radius:10px;background:#C2185B;color:#fff;font-size:.9rem;cursor:pointer;">Receber código no e-mail</button>
-            <button data-google type="button" style="width:100%;margin-top:.5rem;padding:.6rem;border:1px solid #ccc;border-radius:10px;background:#fff;font-size:.9rem;cursor:pointer;display:none;">Entrar com Google</button>
+              style="width:100%;padding:.65rem .8rem;border:1px solid #e5b8c8;border-radius:10px;font-size:.9rem;box-sizing:border-box;" />
+            <button data-send type="button" style="width:100%;margin-top:.6rem;padding:.65rem;border:0;border-radius:10px;background:#C2185B;color:#fff;font-size:.9rem;cursor:pointer;">Receber código no e-mail</button>
+            <button data-google type="button" style="width:100%;margin-top:.5rem;padding:.65rem;border:1px solid #ccc;border-radius:10px;background:#fff;font-size:.9rem;cursor:pointer;display:none;">Entrar com Google</button>
           </div>
           <div data-step="code" style="display:none;">
             <input data-code type="text" inputmode="numeric" maxlength="6" placeholder="código de 6 dígitos"
-              style="width:100%;padding:.6rem .8rem;border:1px solid #e5b8c8;border-radius:10px;font-size:1.1rem;text-align:center;letter-spacing:.3em;box-sizing:border-box;" />
-            <button data-verify type="button" style="width:100%;margin-top:.6rem;padding:.6rem;border:0;border-radius:10px;background:#C2185B;color:#fff;font-size:.9rem;cursor:pointer;">Entrar</button>
+              style="width:100%;padding:.65rem .8rem;border:1px solid #e5b8c8;border-radius:10px;font-size:1.1rem;text-align:center;letter-spacing:.3em;box-sizing:border-box;" />
+            <button data-verify type="button" style="width:100%;margin-top:.6rem;padding:.65rem;border:0;border-radius:10px;background:#C2185B;color:#fff;font-size:.9rem;cursor:pointer;">Entrar</button>
+            <button data-back type="button" style="margin-top:.5rem;border:0;background:none;color:#999;font-size:.78rem;cursor:pointer;">usar outro e-mail</button>
           </div>
-          <p data-msg style="color:#a33;font-size:.78rem;min-height:1em;margin:.7rem 0 0;"></p>
-          <button data-cancel type="button" style="margin-top:.4rem;border:0;background:none;color:#999;font-size:.78rem;cursor:pointer;">cancelar</button>
+          <p data-msg style="color:#a33;font-size:.78rem;min-height:1em;margin:.8rem 0 0;"></p>
         </div>`;
       document.body.appendChild(wrap);
 
       const $ = (s) => wrap.querySelector(s);
       const msg = (t, ok) => { const m = $('[data-msg]'); m.textContent = t; m.style.color = ok ? '#2a7' : '#a33'; };
-      const close = (val) => { wrap.remove(); resolve(val); };
       let email = '';
 
       if (GOOGLE_LOGIN) {
@@ -62,32 +63,48 @@ window.API = (function () {
         $('[data-step-hint]').textContent = `Código enviado para ${email}`;
         msg('', true); $('[data-code]').focus();
       });
+      $('[data-back]').addEventListener('click', () => {
+        $('[data-step="code"]').style.display = 'none';
+        $('[data-step="email"]').style.display = 'block';
+        $('[data-step-hint]').textContent = 'Esse site é só nosso. Confirme que é você.';
+        msg('', true);
+      });
       $('[data-verify]').addEventListener('click', async () => {
         const token = $('[data-code]').value.trim();
         if (token.length < 6) { msg('Digite o código de 6 dígitos'); return; }
         msg('Verificando…', true);
         const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
         if (error) { msg('Código inválido ou expirado'); return; }
-        close(true);
+        wrap.remove(); resolve(true);
       });
       $('[data-code]').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('[data-verify]').click(); });
       $('[data-email]').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('[data-send]').click(); });
-      $('[data-cancel]').addEventListener('click', () => close(false));
     });
   }
 
-  async function ensureAuth() {
-    const { data: { session } } = await sb.auth.getSession();
-    if (session) return true;
-    return loginModal();
+  // ── Assina todos os arquivos de um bucket e preenche o cache ──────────────
+  async function refreshBucket(bucket) {
+    const { data, error } = await sb.storage.from(bucket).list('', { limit: 1000 });
+    if (error || !data) return;
+    const names = data.map((o) => o.name).filter((n) => n !== '.emptyFolderPlaceholder');
+    if (!names.length) { urls[bucket] = new Map(); return; }
+    const { data: signed } = await sb.storage.from(bucket).createSignedUrls(names, SIGN_TTL);
+    const map = new Map();
+    (signed || []).forEach((s) => { if (s.signedUrl) map.set(s.path, s.signedUrl); });
+    urls[bucket] = map;
   }
 
-  // ── Listagem por prefixo (mesma semântica do servidor antigo) ─────────────
+  // ── Portão: garante sessão + carrega URLs assinadas; chama onReady ────────
+  async function gate(onReady) {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) await loginScreen();
+    await Promise.all([refreshBucket('photos'), refreshBucket('audio')]);
+    onReady();
+  }
+
+  // ── Listagem por prefixo (a partir do cache assinado) ─────────────────────
   async function list(prefix) {
-    const { data, error } = await sb.storage.from('photos').list('', { limit: 1000 });
-    if (error || !data) return { files: [] };
-    const files = data
-      .map((o) => o.name)
+    const files = [...urls.photos.keys()]
       .filter((f) => f.startsWith(prefix + '-'))
       .sort((a, b) => {
         const na = parseInt((a.match(/(\d+)(?:\.[^.]+)?$/) || [0, 0])[1]);
@@ -97,12 +114,8 @@ window.API = (function () {
     return { files };
   }
 
-  // ── Existência de um arquivo (para os probes de slot) ─────────────────────
   async function exists(bucket, file) {
-    try {
-      const r = await fetch(`${PUB}/${bucket}/${encodeURIComponent(file)}`, { method: 'HEAD' });
-      return r.ok;
-    } catch { return false; }
+    return urls[bucket].has(file);
   }
 
   // ── Upload — replica a lógica de extensão/destino do server.js ────────────
@@ -128,8 +141,6 @@ window.API = (function () {
   }
 
   async function upload(slot, file) {
-    if (!(await ensureAuth())) return { success: false, error: 'Não autenticado' };
-
     let ext = ('.' + (file.name || '').split('.').pop()).toLowerCase();
     const ct = (file.type || '').toLowerCase();
     const needsConversion = ['.dng', '.heic', '.heif'].includes(ext);
@@ -161,12 +172,14 @@ window.API = (function () {
       cacheControl: '3600',
     });
     if (error) return { success: false, error: error.message };
-    return { success: true, path: (bucket === 'audio' ? audioUrl : photoUrl)(name) };
+    const { data: signed } = await sb.storage.from(bucket).createSignedUrl(name, SIGN_TTL);
+    if (signed?.signedUrl) urls[bucket].set(name, signed.signedUrl);
+    return { success: true, path: urls[bucket].get(name) || '' };
   }
 
   async function remove(file) {
-    if (!(await ensureAuth())) return { success: false };
     const { error } = await sb.storage.from('photos').remove([file]);
+    if (!error) urls.photos.delete(file);
     return { success: !error };
   }
 
@@ -180,10 +193,9 @@ window.API = (function () {
   }
 
   async function saveText(key, value) {
-    if (!(await ensureAuth())) return { success: false };
     const { error } = await sb.from('texts').upsert({ key, value, updated_at: new Date().toISOString() });
     return { success: !error };
   }
 
-  return { list, exists, upload, remove, getTexts, saveText, photoUrl, audioUrl };
+  return { gate, list, exists, upload, remove, getTexts, saveText, photoUrl, audioUrl };
 })();
