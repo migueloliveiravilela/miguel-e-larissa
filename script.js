@@ -60,7 +60,7 @@ function setSoundBadge(container, isMuted) {
 
 async function getMaxNum(prefix) {
   try {
-    const {files=[]} = await fetch(`/list?prefix=${encodeURIComponent(prefix)}`).then(r=>r.json());
+    const {files=[]} = await API.list(prefix);
     let max=0;
     files.filter(f=>f.startsWith(prefix+'-')).forEach(f=>{const m=f.match(/(\d+)(?:\.[^.]+)?$/);if(m)max=Math.max(max,+m[1]);});
     return max;
@@ -80,8 +80,7 @@ async function batchUpload({files,prefix,onItem,progressEl,btn}) {
   upd();
   await Promise.all(files.map(async(file,i)=>{
     const slot=`${prefix}-${maxNum+1+i}`;
-    const form=new FormData(); form.append('slot',slot); form.append('file',file,file.name);
-    try{const d=await fetch('/upload',{method:'POST',body:form}).then(r=>r.json()); if(d.success&&onItem)onItem(d.path+'?t='+Date.now(),slot);}catch{}
+    try{const d=await API.upload(slot,file); if(d.success&&onItem)onItem(d.path+'?t='+Date.now(),slot);}catch{}
     done++; upd();
   }));
   if(progressEl)setTimeout(()=>{progressEl.hidden=true;progressEl.textContent='';},2500);
@@ -103,7 +102,7 @@ function addDeleteBtn(container, getFile, onDeleted) {
     conf.querySelector('.del-yes').addEventListener('click', async ev=>{
       ev.stopPropagation();
       const file=getFile(); if(!file){conf.remove();return;}
-      const res=await fetch(`/photo?file=${encodeURIComponent(file)}`,{method:'DELETE'}).then(r=>r.json()).catch(()=>({success:false}));
+      const res=await API.remove(file).catch(()=>({success:false}));
       conf.remove(); if(res.success)onDeleted();
     });
     conf.querySelector('.del-no').addEventListener('click', ev=>{ev.stopPropagation();conf.remove();});
@@ -126,7 +125,7 @@ const textEditor = (function() {
   let saved={};
 
   async function load() {
-    try { saved=await fetch('/texts').then(r=>r.json()); applyAll(); } catch {}
+    try { saved=await API.getTexts(); applyAll(); } catch {}
   }
 
   function applyAll() {
@@ -172,7 +171,7 @@ const textEditor = (function() {
     async function save() {
       const val=inp.value.trim()||orig;
       try {
-        const d=await fetch('/save-text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,value:val})}).then(r=>r.json());
+        const d=await API.saveText(key,val);
         if(d.success){el.textContent=val;saved[key]=val;}
       }catch{}
       cancel();
@@ -220,14 +219,13 @@ const textEditor = (function() {
   const changeBtn=document.getElementById('hero-video-btn');
   if(!videoEl||!heroBg||!changeBtn)return;
   const EXTS=['.mp4','.webm','.mov'];
-  function probe(){return new Promise(resolve=>{let i=0;function t(){if(i>=EXTS.length){resolve(null);return;}const u=`photos/hero-video${EXTS[i++]}?_=${Date.now()}`;fetch(u,{method:'HEAD'}).then(r=>r.ok?resolve(u):t()).catch(t);}t();});}
+  async function probe(){for(const ext of EXTS){if(await API.exists('photos',`hero-video${ext}`))return API.photoUrl(`hero-video${ext}`)+`?_=${Date.now()}`;}return null;}
   function load(url){videoEl.src=url;videoEl.load();videoEl.play().catch(()=>{});heroBg.classList.add('has-video');}
   probe().then(url=>{if(url)load(url);});
   const fi=document.createElement('input');fi.type='file';fi.accept='video/*';fi.style.display='none';document.body.appendChild(fi);
   changeBtn.addEventListener('click',()=>{fi.value='';fi.click();});
   fi.addEventListener('change',async()=>{const file=fi.files[0];if(!file)return;const orig=changeBtn.textContent;changeBtn.textContent='⏳ Enviando…';changeBtn.disabled=true;
-    const form=new FormData();form.append('slot','hero-video');form.append('file',file,file.name);
-    try{const d=await fetch('/upload',{method:'POST',body:form}).then(r=>r.json());if(d.success){load(d.path+'?t='+Date.now());changeBtn.textContent='🎬 Trocar vídeo';}else{alert('Erro: '+(d.error||''));changeBtn.textContent=orig;}}catch(e){alert('Erro: '+e.message);changeBtn.textContent=orig;}
+    try{const d=await API.upload('hero-video',file);if(d.success){load(d.path+'?t='+Date.now());changeBtn.textContent='🎬 Trocar vídeo';}else{alert('Erro: '+(d.error||''));changeBtn.textContent=orig;}}catch(e){alert('Erro: '+e.message);changeBtn.textContent=orig;}
     changeBtn.disabled=false;});
 })();
 
@@ -239,10 +237,9 @@ const photoUpload=(function(){
   let _i=null,_c=null,_s=null,_b=null;
   function getInput(){if(_i)return _i;_i=document.createElement('input');_i.type='file';_i.accept='image/*,video/*,.dng,.heic,.heif';_i.style.display='none';document.body.appendChild(_i);_i.addEventListener('change',handleChange);return _i;}
   async function handleChange(){const file=_i.files[0];if(!file||!_c||!_s)return;const orig=_b?.textContent;if(_b){_b.textContent='⏳ Enviando…';_b.disabled=true;}
-    const form=new FormData();form.append('slot',_s);form.append('file',file,file.name);
-    try{const d=await fetch('/upload',{method:'POST',body:form}).then(r=>r.json());if(d.success){applyMedia(_c,d.path+'?t='+Date.now());ensureChangeBtn(_c,_s);}else{alert('Erro: '+(d.error||''));if(_b){_b.textContent=orig;_b.disabled=false;}}}catch(e){alert('Erro: '+e.message);if(_b){_b.textContent=orig;_b.disabled=false;}}}
+    try{const d=await API.upload(_s,file);if(d.success){applyMedia(_c,d.path+'?t='+Date.now());ensureChangeBtn(_c,_s);}else{alert('Erro: '+(d.error||''));if(_b){_b.textContent=orig;_b.disabled=false;}}}catch(e){alert('Erro: '+e.message);if(_b){_b.textContent=orig;_b.disabled=false;}}}
   function trigger(c,s,b){_c=c;_s=s;_b=b;getInput().value='';getInput().click();}
-  function probe(slot){return new Promise(resolve=>{let i=0;function t(){if(i>=PROBE.length){resolve(null);return;}const u=`photos/${slot}${PROBE[i++]}?_=${Date.now()}`;fetch(u,{method:'HEAD'}).then(r=>r.ok?resolve(u):t()).catch(t);}t();});}
+  async function probe(slot){for(const ext of PROBE){if(await API.exists('photos',slot+ext))return API.photoUrl(slot+ext)+`?_=${Date.now()}`;}return null;}
   function applyMedia(cnt,url){
     if(cnt.classList.contains('hero-bg')){const img=cnt.querySelector('.hero-img');if(img&&!isVideoUrl(url)){img.src=url;img.style.opacity='1';}cnt.classList.remove('no-photo');cnt.classList.add('has-photo');return;}
     const isVid=isVideoUrl(url);
@@ -321,7 +318,7 @@ const lightbox=(function(){
     requestAnimationFrame(()=>{item.style.opacity='0';item.style.transition='opacity 0.3s';requestAnimationFrame(()=>item.style.opacity='1');});
   }
 
-  (async()=>{try{const{files=[]}=await fetch('/list?prefix=gallery').then(r=>r.json());files.forEach(f=>addItem(`/photos/${f}`));}catch{}})();
+  (async()=>{try{const{files=[]}=await API.list('gallery');files.forEach(f=>addItem(API.photoUrl(f)));}catch{}})();
 
   if(!batchBtn)return;
   const fi=document.createElement('input');fi.type='file';fi.accept='image/*,video/*,.dng,.heic,.heif';fi.multiple=true;fi.style.display='none';document.body.appendChild(fi);
@@ -355,7 +352,7 @@ async function buildCarousel(carousel){
     track.appendChild(slide);addBtn.textContent='＋ Adicionar foto ou vídeo';updateArrows();
   }
 
-  try{const{files=[]}=await fetch(`/list?prefix=${encodeURIComponent(prefix)}`).then(r=>r.json());files.forEach(f=>addSlide(`/photos/${f}`));}catch{}
+  try{const{files=[]}=await API.list(prefix);files.forEach(f=>addSlide(API.photoUrl(f)));}catch{}
   updateArrows();
 
   const fi=document.createElement('input');fi.type='file';fi.accept='image/*,video/*,.dng,.heic,.heif';fi.multiple=true;fi.style.display='none';document.body.appendChild(fi);
@@ -389,7 +386,7 @@ async function buildCarousel(carousel){
       grid.appendChild(item);addBtn.textContent='＋ Adicionar foto ou vídeo';
     }
 
-    try{const{files=[]}=await fetch(`/list?prefix=${encodeURIComponent(prefix)}`).then(r=>r.json());files.forEach(f=>addItem(`/photos/${f}`));}catch{}
+    try{const{files=[]}=await API.list(prefix);files.forEach(f=>addItem(API.photoUrl(f)));}catch{}
 
     const fi=document.createElement('input');fi.type='file';fi.accept='image/*,video/*,.dng,.heic,.heif';fi.multiple=true;fi.style.display='none';document.body.appendChild(fi);
     addBtn.addEventListener('click',()=>{fi.value='';fi.click();});
@@ -459,11 +456,11 @@ async function buildCarousel(carousel){
     (async()=>{
       const syncPrefix=ALBUM_SYNC[album.id];
       const [albumRes,syncRes]=await Promise.all([
-        fetch(`/list?prefix=${encodeURIComponent(album.prefix)}`).then(r=>r.json()).catch(()=>({files:[]})),
-        syncPrefix ? fetch(`/list?prefix=${encodeURIComponent(syncPrefix)}`).then(r=>r.json()).catch(()=>({files:[]})) : Promise.resolve({files:[]}),
+        API.list(album.prefix).catch(()=>({files:[]})),
+        syncPrefix ? API.list(syncPrefix).catch(()=>({files:[]})) : Promise.resolve({files:[]}),
       ]);
-      (albumRes.files||[]).forEach(f=>addItem(`/photos/${f}`,true));
-      (syncRes.files||[]).forEach(f=>addItem(`/photos/${f}`,false)); // synced: não deletável daqui
+      (albumRes.files||[]).forEach(f=>addItem(API.photoUrl(f),true));
+      (syncRes.files||[]).forEach(f=>addItem(API.photoUrl(f),false)); // synced: não deletável daqui
     })();
 
     const fi=document.createElement('input');fi.type='file';fi.accept='image/*,video/*,.dng,.heic,.heif';fi.multiple=true;fi.style.display='none';document.body.appendChild(fi);
@@ -523,8 +520,8 @@ textEditor.load().then(()=>textEditor.init());
     }
   }
 
-  probeAudio('/audio/antes.mp3', tA, 'status-antes', 'upload-antes');
-  probeAudio('/audio/nossa.mp3', tB, 'status-nossa', 'upload-nossa');
+  probeAudio(API.audioUrl('antes.mp3'), tA, 'status-antes', 'upload-antes');
+  probeAudio(API.audioUrl('nossa.mp3'), tB, 'status-nossa', 'upload-nossa');
 
   if (toggleBtn) {
     toggleBtn.addEventListener('click',()=>{
@@ -559,9 +556,8 @@ textEditor.load().then(()=>textEditor.init());
       const file=inp.files[0]; if(!file)return;
       const orig=btn.textContent; btn.textContent='⏳ Enviando…'; btn.disabled=true;
       if(status)status.textContent='';
-      const form=new FormData(); form.append('slot',slot); form.append('file',file,file.name);
       try {
-        const d=await fetch('/upload',{method:'POST',body:form}).then(r=>r.json());
+        const d=await API.upload(slot,file);
         if (d.success) {
           track.src=d.path+'?t='+Date.now(); track.load();
           audioAvailable=true;
