@@ -3,24 +3,83 @@
    API — adaptador Supabase
    Substitui o servidor Node (upload/list/texts/delete)
    por Storage + tabela `texts` do Supabase.
+
+   Edição restrita: apenas os e-mails autorizados (também
+   travado por RLS no banco) entram via código por e-mail
+   ou, se habilitado, botão "Entrar com Google".
    ===================================================== */
 window.API = (function () {
-  const { SUPABASE_URL, SUPABASE_ANON_KEY, EDIT_EMAIL } = window.SITE_CONFIG;
+  const { SUPABASE_URL, SUPABASE_ANON_KEY, GOOGLE_LOGIN } = window.SITE_CONFIG;
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
   const PUB = `${SUPABASE_URL}/storage/v1/object/public`;
   const photoUrl = (file) => `${PUB}/photos/${encodeURIComponent(file)}`;
   const audioUrl = (file) => `${PUB}/audio/${encodeURIComponent(file)}`;
 
-  // ── Sessão de edição (senha compartilhada) ────────────────────────────────
+  // ── Login (modal: e-mail → código de 6 dígitos) ───────────────────────────
+  function loginModal() {
+    return new Promise((resolve) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:1rem;';
+      wrap.innerHTML = `
+        <div style="background:#fff;border-radius:16px;max-width:340px;width:100%;padding:1.6rem;font-family:Nunito,sans-serif;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+          <div style="font-size:2rem;">🔐</div>
+          <h3 style="margin:.4rem 0 .2rem;color:#C2185B;font-size:1.05rem;">Área do casal</h3>
+          <p data-step-hint style="color:#666;font-size:.82rem;margin:0 0 1rem;">Para editar, confirme que é você.</p>
+          <div data-step="email">
+            <input data-email type="email" placeholder="seu e-mail" autocomplete="email"
+              style="width:100%;padding:.6rem .8rem;border:1px solid #e5b8c8;border-radius:10px;font-size:.9rem;box-sizing:border-box;" />
+            <button data-send type="button" style="width:100%;margin-top:.6rem;padding:.6rem;border:0;border-radius:10px;background:#C2185B;color:#fff;font-size:.9rem;cursor:pointer;">Receber código no e-mail</button>
+            <button data-google type="button" style="width:100%;margin-top:.5rem;padding:.6rem;border:1px solid #ccc;border-radius:10px;background:#fff;font-size:.9rem;cursor:pointer;display:none;">Entrar com Google</button>
+          </div>
+          <div data-step="code" style="display:none;">
+            <input data-code type="text" inputmode="numeric" maxlength="6" placeholder="código de 6 dígitos"
+              style="width:100%;padding:.6rem .8rem;border:1px solid #e5b8c8;border-radius:10px;font-size:1.1rem;text-align:center;letter-spacing:.3em;box-sizing:border-box;" />
+            <button data-verify type="button" style="width:100%;margin-top:.6rem;padding:.6rem;border:0;border-radius:10px;background:#C2185B;color:#fff;font-size:.9rem;cursor:pointer;">Entrar</button>
+          </div>
+          <p data-msg style="color:#a33;font-size:.78rem;min-height:1em;margin:.7rem 0 0;"></p>
+          <button data-cancel type="button" style="margin-top:.4rem;border:0;background:none;color:#999;font-size:.78rem;cursor:pointer;">cancelar</button>
+        </div>`;
+      document.body.appendChild(wrap);
+
+      const $ = (s) => wrap.querySelector(s);
+      const msg = (t, ok) => { const m = $('[data-msg]'); m.textContent = t; m.style.color = ok ? '#2a7' : '#a33'; };
+      const close = (val) => { wrap.remove(); resolve(val); };
+      let email = '';
+
+      if (GOOGLE_LOGIN) {
+        const g = $('[data-google]'); g.style.display = 'block';
+        g.addEventListener('click', () => sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.href.split('#')[0] } }));
+      }
+      $('[data-send]').addEventListener('click', async () => {
+        email = $('[data-email]').value.trim().toLowerCase();
+        if (!email) { msg('Digite seu e-mail'); return; }
+        msg('Enviando…', true);
+        const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+        if (error) { msg(/not (allowed|found)|Signups/i.test(error.message) ? 'Esse e-mail não tem permissão 💔' : error.message); return; }
+        $('[data-step="email"]').style.display = 'none';
+        $('[data-step="code"]').style.display = 'block';
+        $('[data-step-hint]').textContent = `Código enviado para ${email}`;
+        msg('', true); $('[data-code]').focus();
+      });
+      $('[data-verify]').addEventListener('click', async () => {
+        const token = $('[data-code]').value.trim();
+        if (token.length < 6) { msg('Digite o código de 6 dígitos'); return; }
+        msg('Verificando…', true);
+        const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+        if (error) { msg('Código inválido ou expirado'); return; }
+        close(true);
+      });
+      $('[data-code]').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('[data-verify]').click(); });
+      $('[data-email]').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('[data-send]').click(); });
+      $('[data-cancel]').addEventListener('click', () => close(false));
+    });
+  }
+
   async function ensureAuth() {
     const { data: { session } } = await sb.auth.getSession();
     if (session) return true;
-    const pwd = window.prompt('Senha de edição:');
-    if (!pwd) return false;
-    const { error } = await sb.auth.signInWithPassword({ email: EDIT_EMAIL, password: pwd });
-    if (error) { alert('Senha incorreta 💔'); return false; }
-    return true;
+    return loginModal();
   }
 
   // ── Listagem por prefixo (mesma semântica do servidor antigo) ─────────────
